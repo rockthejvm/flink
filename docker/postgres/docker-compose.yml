@@ -1,0 +1,12 @@
+version: '2'
+
+services:
+  postgres:
+    image: postgres:latest
+    container_name: rockthejvm-flink-postgres
+    environment:
+      - "TZ=Europe/Amsterdam"
+      - "POSTGRES_USER=docker"
+      - "POSTGRES_PASSWORD=docker"
+    ports:
+      - "5432:5432"

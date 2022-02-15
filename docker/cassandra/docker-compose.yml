@@ -1,0 +1,10 @@
+version: '2'
+services:
+  cassandra:
+    image: cassandra:3
+    container_name: rockthejvm-flink-cassandra
+    ports:
+      - "7000:7000"
+      - "9042:9042"
+    environment:
+      - "CASSANDRA_CLUSTER_NAME=OUR_DOCKERIZED_CASSANDRA_SINGLE_NODE_CLUSTER"
