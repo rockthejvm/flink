@@ -1,3 +1,6 @@
+## output dirs
+output/
+
 
 # Created by https://www.toptal.com/developers/gitignore/api/intellij,sbt,scala,java
 # Edit at https://www.toptal.com/developers/gitignore?templates=intellij,sbt,scala,java
