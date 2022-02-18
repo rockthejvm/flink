@@ -4,10 +4,11 @@ import generators.gaming._
 import org.apache.flink.api.common.eventtime.{SerializableTimestampAssigner, WatermarkStrategy}
 import org.apache.flink.api.common.functions.AggregateFunction
 import org.apache.flink.streaming.api.scala._
-import org.apache.flink.streaming.api.scala.function.{AllWindowFunction, ProcessAllWindowFunction}
-import org.apache.flink.streaming.api.windowing.assigners.TumblingEventTimeWindows
+import org.apache.flink.streaming.api.scala.function.{AllWindowFunction, ProcessAllWindowFunction, ProcessWindowFunction, WindowFunction}
+import org.apache.flink.streaming.api.windowing.assigners.{EventTimeSessionWindows, GlobalWindows, SlidingEventTimeWindows, TumblingEventTimeWindows}
 import org.apache.flink.streaming.api.windowing.time.Time
-import org.apache.flink.streaming.api.windowing.windows.TimeWindow
+import org.apache.flink.streaming.api.windowing.triggers.CountTrigger
+import org.apache.flink.streaming.api.windowing.windows.{GlobalWindow, TimeWindow}
 import org.apache.flink.util.Collector
 
 import java.time.Instant
@@ -117,7 +118,168 @@ object WindowFunctions {
     env.execute()
   }
 
+  /**
+   * Keyed streams and window functions
+   */
+  // each element will be assigned to a "mini-stream" for its own key
+  val streamByType: KeyedStream[ServerEvent, String] = eventStream.keyBy(e => e.getClass.getSimpleName)
+
+  // for every key, we'll have a separate window allocation
+  val threeSecondsTumblingWindowByType = streamByType.window(TumblingEventTimeWindows.of(Time.seconds(3)))
+
+  /*
+    === Registration Events Stream ===
+    |----0----|----1----|--------2--------|--------3--------|---------4---------|---5---|--------6--------|---7---|--------8--------|--9--|------10-------|------11------|
+    |         |         | bob registered  | sam registered  | rob registered    |       | mary registered |       | carl registered |     |               |              |
+    |         |         |                 |                 | alice registered  |       |                 |       |                 |     |               |              |
+    ^|------------ window one ----------- + -------------- window two ----------------- + ------------- window three -------------- + ----------- window four ----------|^
+    |            1 registration           |               3 registrations               |              2 registrations              |            0 registrations         |
+    |     1643760000000 - 1643760003000   |        1643760003000 - 1643760006000        |       1643760006000 - 1643760009000       |    1643760009000 - 1643760012000   |
+
+    === Online Events Stream ===
+    |----0----|----1----|--------2--------|--------3--------|---------4---------|---5---|--------6--------|---7---|--------8--------|--9--|------10-------|------11------|
+    |         |         | bob online      |                 | sam online        |       | mary online     |       |                 |     | rob online    | carl online  |
+    |         |         |                 |                 |                   |       |                 |       |                 |     | alice online  |              |
+    ^|------------ window one ----------- + -------------- window two ----------------- + ------------- window three -------------- + ----------- window four ----------|^
+    |            1 online                 |               1 online                      |              1 online                     |            3 online                |
+    |     1643760000000 - 1643760003000   |        1643760005000 - 1643760006000        |       1643760006000 - 1643760009000       |    1643760009000 - 1643760012000   |
+  */
+
+  class CountByWindow extends WindowFunction[ServerEvent, String, String, TimeWindow] {
+    override def apply(key: String, window: TimeWindow, input: Iterable[ServerEvent], out: Collector[String]): Unit =
+      out.collect(s"$key: $window, ${input.size}")
+  }
+
+  def demoCountByTypeByWindow(): Unit = {
+    val finalStream = threeSecondsTumblingWindowByType.apply(new CountByWindow)
+    finalStream.print()
+    env.execute()
+  }
+
+  // alternative: process function for windows
+  class CountByWindowV2 extends ProcessWindowFunction[ServerEvent, String, String, TimeWindow] {
+    override def process(key: String, context: Context, elements: Iterable[ServerEvent], out: Collector[String]): Unit =
+      out.collect(s"$key: ${context.window}, ${elements.size}")
+  }
+
+  def demoCountByTypeByWindow_v2(): Unit = {
+    val finalStream = threeSecondsTumblingWindowByType.process(new CountByWindowV2)
+    finalStream.print()
+    env.execute()
+  }
+
+  // one task processes all the data for a particular key
+
+  /**
+   * Sliding Windows
+   */
+
+  // how many players were registered every 3 seconds, UPDATED EVERY 1s?
+  // [0s...3s] [1s...4s] [2s...5s] ...
+
+  /*
+  |----0----|----1----|--------2--------|--------3--------|---------4---------|---5---|--------6--------|---7---|--------8--------|--9--|------10-------|------11------|
+  |         |         | bob registered  | sam registered  | sam online        |       | mary registered |       | carl registered |     | rob online    | carl online  |
+  |         |         | bob online      |                 | rob registered    |       | mary online     |       |                 |     | alice online  |              |
+  |         |         |                 |                 | alice registered  |       |                 |       |                 |     |               |              |
+  ^|------------ window one ----------- +
+                1 registration
+
+            + ---------------- window two --------------- +
+                                  2 registrations
+
+                       + ------------------- window three ------------------- +
+                                           4 registrations
+
+                                         + ---------------- window four --------------- +
+                                                          3 registrations
+
+                                                          + ---------------- window five -------------- +
+                                                                           3 registrations
+
+                                                                               + ---------- window six -------- +
+                                                                                           1 registration
+
+                                                                                        + ------------ window seven ----------- +
+                                                                                                    2 registrations
+
+                                                                                                         + ------- window eight------- +
+                                                                                                                  1 registration
+
+                                                                                                                + ----------- window nine ----------- +
+                                                                                                                        1 registration
+
+                                                                                                                                   + ---------- window ten --------- +
+                                                                                                                                              0 registrations
+   */
+
+  def demoSlidingAllWindows(): Unit = {
+    val windowSize: Time = Time.seconds(3)
+    val slidingTime: Time = Time.seconds(1)
+
+    val slidingWindowsAll = eventStream.windowAll(SlidingEventTimeWindows.of(windowSize, slidingTime))
+
+    // process the windowed stream with similar window functions
+    val registrationCountByWindow = slidingWindowsAll.apply(new CountByWindowAll)
+
+    // similar to the other example
+    registrationCountByWindow.print()
+    env.execute()
+  }
+
+  /**
+   * Session windows = groups of events with NO MORE THAN a certain time gap in between them
+   */
+  // how many registration events do we have NO MORE THAN 1s apart?
+  /*
+    |----0----|----1----|--------2--------|--------3--------|---------4---------|---5---|--------6--------|---7---|--------8--------|--9--|------10-------|------11------|
+    |         |         | bob registered  | sam registered  | sam online        |       | mary registered |       | carl registered |     | rob online    |              |
+    |         |         | bob online      |                 | rob registered    |       | mary online     |       |                 |     | alice online  |              |
+    |         |         |                 |                 | alice registered  |       |                 |       |                 |     | carl online   |              |
+
+    after filtering:
+
+    +---------+---------+-----------------+-----------------+-------------------+-------+-----------------+-------+-----------------+-----+---------------+--------------+
+    |         |         | bob registered  | sam registered  | rob registered    |       | mary registered |       | carl registered |     |     N/A       |              |
+    |         |         |                 |                 | alice registered  |       |                 |       |                 |     |               |              |
+                        ^ ----------------- window 1 -------------------------- ^       ^ -- window 2 --- ^       ^ -- window 3 --- ^     ^ -- window 4 - ^
+  */
+
+  def demoSessionWindows(): Unit = {
+    val groupBySessionWindows = eventStream.windowAll(EventTimeSessionWindows.withGap(Time.seconds(1)))
+
+    // operate any kind of window function
+    val countBySessionWindows = groupBySessionWindows.apply(new CountByWindowAll)
+
+    // same things as before
+    countBySessionWindows.print()
+    env.execute()
+  }
+
+  /**
+   * Global window
+   */
+  // how many registration events do we have every 10 events
+
+  class CountByGlobalWindowAll extends AllWindowFunction[ServerEvent, String, GlobalWindow] {
+    //                                                    ^ input      ^ output  ^ window type
+    override def apply(window: GlobalWindow, input: Iterable[ServerEvent], out: Collector[String]): Unit = {
+      val registrationEventCount = input.count(event => event.isInstanceOf[PlayerRegistered])
+      out.collect(s"Window [$window] $registrationEventCount")
+    }
+  }
+
+  def demoGlobalWindow(): Unit = {
+    val globalWindowEvents = eventStream
+      .windowAll(GlobalWindows.create())
+      .trigger(CountTrigger.of[GlobalWindow](10))
+      .apply(new CountByGlobalWindowAll)
+
+    globalWindowEvents.print()
+    env.execute()
+  }
+
   def main(args: Array[String]): Unit = {
-    demoCountByWindow_v3()
+    demoGlobalWindow()
   }
 }
