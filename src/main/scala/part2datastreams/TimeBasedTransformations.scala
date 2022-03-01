@@ -1,6 +1,5 @@
 package part2datastreams
 
-import generators.gaming.{PlayerRegistered, ServerEvent}
 import generators.shopping._
 import org.apache.flink.api.common.eventtime.{SerializableTimestampAssigner, Watermark, WatermarkGenerator, WatermarkOutput, WatermarkStrategy}
 import org.apache.flink.streaming.api.scala._
