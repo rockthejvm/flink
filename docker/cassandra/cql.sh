@@ -7,4 +7,4 @@ echo "help                       : for more cqlsh commands"
 echo "help [cqlsh command]       : Gives information about cqlsh commands"
 echo "quit                       : quit"
 echo "=================================================================="
-docker exec -it rockthejvm-sparkstreaming-cassandra cqlsh
+docker exec -it rockthejvm-flink-cassandra cqlsh

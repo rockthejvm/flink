@@ -90,7 +90,7 @@ package object shopping {
     sleepMillisBetweenEvents,
     SingleShoppingCartEventsGenerator.generateEvent(
       generateRemoved,
-      sourceId
+      () => sourceId
         .map(sId => s"${sId}_${UUID.randomUUID()}")
         .getOrElse(UUID.randomUUID().toString),
       baseInstant
@@ -104,20 +104,20 @@ package object shopping {
     import ShoppingCartEventsGenerator._
 
     def generateEvent
-    : (Boolean, String, java.time.Instant) => Long => ShoppingCartEvent =
-      (generateRemoved, sku, baseInstant) =>
+    : (Boolean, () => String, java.time.Instant) => Long => ShoppingCartEvent =
+      (generateRemoved, skuGen, baseInstant) =>
         id =>
           if (!generateRemoved || scala.util.Random.nextBoolean())
             AddToShoppingCartEvent(
               getRandomUser,
-              sku,
+              skuGen(),
               getRandomQuantity,
               baseInstant.plusSeconds(id)
             )
           else
             RemovedFromShoppingCartEvent(
               getRandomUser,
-              sku,
+              skuGen(),
               getRandomQuantity,
               baseInstant.plusSeconds(id)
             )
