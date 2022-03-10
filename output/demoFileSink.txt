@@ -1,3 +1,0 @@
-This is an example of a sink function
-some other string
-Daniel says this is ok
