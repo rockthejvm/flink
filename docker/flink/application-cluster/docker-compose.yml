@@ -1,7 +1,7 @@
 version: "2.2"
 services:
   jobmanager:
-    image: flink:latest
+    image: flink:1.20.3-scala_2.12-java8
     ports:
       - "8081:8081"
     command: standalone-job --job-classname com.job.ClassName
@@ -14,7 +14,7 @@ services:
         parallelism.default: 2
 
   taskmanager:
-    image: flink:latest
+    image: flink:1.20.3-scala_2.12-java8
     depends_on:
       - jobmanager
     command: taskmanager
